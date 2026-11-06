@@ -1,0 +1,58 @@
+<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>4v4 FPS</title>
+<style>body{margin:0;overflow:hidden;background:#000;font:15px sans-serif;color:#fff}#hud{position:fixed;inset:0;pointer-events:none}
+#hp{position:absolute;left:14px;bottom:12px;font-size:30px}#sc{position:absolute;top:8px;width:100%;text-align:center;font-size:22px}
+#kf{position:absolute;right:12px;top:8px;text-align:right}#kd{position:absolute;left:14px;top:8px}
+#cx{position:absolute;left:50%;top:50%;width:6px;height:6px;margin:-3px;background:#fff;border-radius:50%}
+#msg{position:absolute;top:35%;width:100%;text-align:center;font-size:34px}
+#start{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:#000b;font-size:22px;text-align:center;cursor:pointer}</style></head><body>
+<div id="hud"><div id="sc"></div><div id="kd"></div><div id="kf"></div><div id="cx"></div><div id="msg"></div><div id="hp"></div></div>
+<div id="start">クリックして開始<br>WASD移動 / マウス視点 / 左クリック射撃 / Spaceジャンプ / Esc解除</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+const NAME=(prompt('名前（12文字まで）')||'').slice(0,12);
+const R=new THREE.WebGLRenderer();R.setSize(innerWidth,innerHeight);document.body.appendChild(R.domElement);
+const S=new THREE.Scene();S.background=new THREE.Color(0x9ec7e8);S.fog=new THREE.Fog(0x9ec7e8,30,110);
+const C=new THREE.PerspectiveCamera(75,innerWidth/innerHeight,.1,200);
+S.add(new THREE.HemisphereLight(0xffffff,0x556655,1.1));
+const fl=new THREE.Mesh(new THREE.PlaneGeometry(100,100),new THREE.MeshLambertMaterial({color:0x6a7f5a}));fl.rotation.x=-Math.PI/2;S.add(fl);
+const B=[[0,-50,100,2,6],[0,50,100,2,6],[-50,0,2,100,6],[50,0,2,100,6],[0,0,8,2,3],[-15,10,6,6,3],[15,-10,6,6,3],[-20,-20,10,2,3],[20,20,10,2,3],[0,22,4,4,2],[0,-22,4,4,2],[-30,0,3,12,3],[30,0,3,12,3]];
+const walls=B.map(([x,z,w,d,h])=>{const m=new THREE.Mesh(new THREE.BoxGeometry(w,h,d),new THREE.MeshLambertMaterial({color:0x888888}));m.position.set(x,h/2,z);S.add(m);return m});
+const P={x:0,y:1.6,z:35,vy:0,yaw:0,pitch:0};let me=0,team=0,hp=100,dead=0,locked=false,fire=false,lastShot=0,sock;
+const rem={},$=id=>document.getElementById(id),keys={};
+const rc=new THREE.Raycaster();rc.far=100;
+function collide(){for(const[x,z,w,d,h]of B){if(P.y-1.6>=h)continue;const dx=P.x-x,dz=P.z-z,ox=w/2+.4-Math.abs(dx),oz=d/2+.4-Math.abs(dz);if(ox>0&&oz>0){if(ox<oz)P.x+=Math.sign(dx||1)*ox;else P.z+=Math.sign(dz||1)*oz}}}
+function connect(){sock=new WebSocket((location.protocol=='https:'?'wss://':'ws://')+location.host);
+sock.onopen=()=>sock.send(JSON.stringify({t:'name',n:NAME}));
+sock.onmessage=e=>{const d=JSON.parse(e.data);
+if(d.t=='init'){me=d.id;team=d.team;P.x=d.x;P.z=d.z;P.yaw=d.team?0:Math.PI}
+else if(d.t=='respawn'){P.x=d.x;P.z=d.z;P.y=1.6;P.vy=0;P.yaw=team?0:Math.PI}
+else if(d.t=='kill'){const l=document.createElement('div');l.textContent=d.a+' → '+d.b;$('kf').prepend(l);setTimeout(()=>l.remove(),5000)}
+else if(d.t=='win'){$('msg').textContent=(d.team?'赤':'青')+'チームの勝利！';setTimeout(()=>$('msg').textContent='',4000)}
+else if(d.t=='s'){$('sc').textContent='青 '+d.s[0]+' - '+d.s[1]+' 赤（30キルで勝利）';const ids={};
+for(const p of d.p){ids[p.id]=1;if(p.id==me){hp=p.hp;dead=p.dead;$('kd').textContent='K '+p.k+' / D '+p.d;continue}
+let m=rem[p.id];if(!m){m=rem[p.id]=new THREE.Mesh(new THREE.BoxGeometry(.8,1.8,.8),new THREE.MeshLambertMaterial({color:p.team?0xd33:0x38e}));m.userData.id=p.id;m.userData.t=new THREE.Vector3();S.add(m)}
+m.userData.t.set(p.x,p.y-.7,p.z);m.visible=!p.dead;m.rotation.y=p.ry}
+for(const id in rem)if(!ids[id]){S.remove(rem[id]);delete rem[id]}}};
+sock.onclose=()=>setTimeout(connect,2000)}
+connect();
+$('start').onclick=()=>R.domElement.requestPointerLock();
+document.addEventListener('pointerlockchange',()=>{locked=document.pointerLockElement==R.domElement;$('start').style.display=locked?'none':'flex'});
+document.addEventListener('mousemove',e=>{if(!locked)return;P.yaw-=e.movementX*.0022;P.pitch=Math.max(-1.5,Math.min(1.5,P.pitch-e.movementY*.0022))});
+addEventListener('keydown',e=>{keys[e.code]=1});addEventListener('keyup',e=>{keys[e.code]=0});
+addEventListener('mousedown',e=>{if(locked&&e.button==0)fire=true});addEventListener('mouseup',()=>fire=false);
+addEventListener('resize',()=>{R.setSize(innerWidth,innerHeight);C.aspect=innerWidth/innerHeight;C.updateProjectionMatrix()});
+function shoot(){rc.setFromCamera({x:0,y:0},C);const hs=rc.intersectObjects([...walls,...Object.values(rem).filter(m=>m.visible)]);
+if(hs[0]&&hs[0].object.userData.id){sock.send(JSON.stringify({t:'hit',id:hs[0].object.userData.id}));$('cx').style.background='#f33';setTimeout(()=>$('cx').style.background='#fff',120)}}
+let last=performance.now(),sent=0;
+(function loop(now){requestAnimationFrame(loop);const dt=Math.min(.05,(now-last)/1000);last=now;
+if(locked&&!dead){const f=(keys.KeyW?1:0)-(keys.KeyS?1:0),s=(keys.KeyD?1:0)-(keys.KeyA?1:0),l=Math.hypot(f,s)||1,sp=7;
+P.x+=(-Math.sin(P.yaw)*f+Math.cos(P.yaw)*s)/l*sp*dt;P.z+=(-Math.cos(P.yaw)*f-Math.sin(P.yaw)*s)/l*sp*dt;
+P.vy-=20*dt;P.y+=P.vy*dt;if(P.y<=1.6){P.y=1.6;P.vy=0;if(keys.Space)P.vy=7}
+collide();P.x=Math.max(-48,Math.min(48,P.x));P.z=Math.max(-48,Math.min(48,P.z));
+if(fire&&now-lastShot>110){lastShot=now;shoot()}
+if(now-sent>50&&sock.readyState==1){sent=now;sock.send(JSON.stringify({t:'move',x:P.x,y:P.y,z:P.z,ry:P.yaw}))}}
+C.position.set(P.x,P.y,P.z);C.rotation.set(P.pitch,P.yaw,0,'YXZ');
+for(const id in rem){const m=rem[id];m.position.lerp(m.userData.t,.35)}
+$('hp').textContent=dead?'倒された…リスポーン待ち':'HP '+hp;
+R.render(S,C)})(last);
+</script></body></html>
